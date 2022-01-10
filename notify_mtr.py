@@ -3,15 +3,16 @@
 import base64
 import hashlib
 import hmac
+import json
 import os
 import re
 import threading
 import time
+import traceback
 import urllib.parse
-from json import JSONDecodeError
 
-import json5 as json
 import requests
+import tomli
 
 from utils_env import get_file_path
 
@@ -84,18 +85,16 @@ for k in push_config:
         push_config[k] = v
 
 # 读取配置文件中的变量 (会覆盖环境变量)
-CONFIG_PATH = os.getenv("NOTIFY_CONFIG_PATH") or get_file_path("notify.json5")
+CONFIG_PATH = os.getenv("NOTIFY_CONFIG_PATH") or get_file_path("notify.toml")
 if os.path.exists(CONFIG_PATH):
     print(f"通知配置文件存在：{CONFIG_PATH}。")
     try:
-        for k, v in dict(
-            json.load(open(CONFIG_PATH, mode="r", encoding="utf-8"))
-        ).items():
+        for k, v in dict(tomli.load(open(CONFIG_PATH, "rb"))).items():
             if k in push_config:
                 push_config[k] = v
-    except ValueError:
+    except tomli.TOMLDecodeError:
         print(
-            f"错误：配置文件 {CONFIG_PATH} 格式不对，请在 https://verytoolz.com/json5-validator.html 中检查格式"
+            f"错误：配置文件 {CONFIG_PATH} 格式不对，请学习 https://toml.io/cn/v1.0.0\n错误信息：\n{traceback.format_exc()}"
         )
 elif CONFIG_PATH:
     print(f"{CONFIG_PATH} 配置的通知文件不存在，请检查文件位置或删除对应环境变量！")
@@ -132,14 +131,13 @@ def bark(title: str, content: str) -> None:
     if params:
         url = url + "?" + params.rstrip("&")
 
-    response = requests.get(url, timeout=15)
-    datas = response.json()
+    datas = requests.get(url, timeout=15).json()
     if datas.get("code") == 200:
         print("bark 推送成功！")
     elif datas.get("code") == 400:
         print("bark 推送失败！找不到 Key 对应的 DeviceToken。")
     else:
-        print(f"bark 推送失败！响应数据：{response.text}")
+        print(f"bark 推送失败！响应数据：{datas}")
 
 
 def console(title: str, content: str) -> None:
@@ -170,14 +168,13 @@ def dingding_bot(title: str, content: str) -> None:
     headers = {"Content-Type": "application/json;charset=utf-8"}
     data = {"msgtype": "text", "text": {"content": f"{title}\n\n{content}"}}
 
-    response = requests.post(
-        url=url, data=json.dumps(data, quote_keys=True), headers=headers, timeout=15
-    )
-    datas = response.json()
-    if datas.get("errcode") is None:
+    datas = requests.post(
+        url=url, data=json.dumps(data), headers=headers, timeout=15
+    ).json()
+    if datas.get("errcode") == 0:
         print("钉钉机器人 推送成功！")
     else:
-        print(f"钉钉机器人 推送失败！响应数据：{response.text}")
+        print(f"钉钉机器人 推送失败！响应数据：{datas}")
 
 
 def feishu_bot(title: str, content: str) -> None:
@@ -192,12 +189,12 @@ def feishu_bot(title: str, content: str) -> None:
     url = f'https://open.feishu.cn/open-apis/bot/v2/hook/{push_config.get("FSKEY")}'
     data = {"msg_type": "text", "content": {"text": f"{title}\n\n{content}"}}
 
-    response = requests.post(url, data=json.dumps(data, quote_keys=True), timeout=15)
-    datas = response.json
+    datas = requests.post(url, data=json.dumps(data), timeout=15)
+    datas = datas.json
     if datas.get("StatusCode") == 0:
         print("飞书 推送成功！")
     else:
-        print(f"飞书 推送失败！响应数据：{response.text}")
+        print(f"飞书 推送失败！响应数据：{datas}")
 
 
 def go_cqhttp(title: str, content: str) -> None:
@@ -211,12 +208,11 @@ def go_cqhttp(title: str, content: str) -> None:
 
     url = f'{push_config.get("GOBOT_URL")}?access_token={push_config.get("GOBOT_TOKEN")}&{push_config.get("GOBOT_QQ")}&message=标题:{title}\n内容:{content}'
 
-    response = requests.get(url, timeout=15)
-    datas = response.json()
+    datas = requests.get(url, timeout=15).json()
     if datas.get("status") == "ok":
         print("go-cqhttp 推送成功！")
     else:
-        print("go-cqhttp 推送失败！响应数据：{response.text}")
+        print(f"go-cqhttp 推送失败！响应数据：{datas}")
 
 
 def iGot(title: str, content: str) -> None:
@@ -232,8 +228,7 @@ def iGot(title: str, content: str) -> None:
     data = {"title": title, "content": content}
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
 
-    response = requests.post(url, data=data, headers=headers, timeout=15)
-    datas = response.json()
+    datas = requests.post(url, data=data, headers=headers, timeout=15).json()
     if datas.get("ret") == 0:
         print("iGot 推送成功！")
     else:
@@ -255,8 +250,7 @@ def serverJ(title: str, content: str) -> None:
     else:
         url = f'https://sc.ftqq.com/${push_config.get("PUSH_KEY")}.send'
 
-    response = requests.post(url, data=data, timeout=15)
-    datas = response.json()
+    datas = requests.post(url, data=data, timeout=15).json()
     if datas.get("errno") == 0 or datas.get("code") == 0:
         print("serverJ 推送成功！")
     elif datas.get("code") == 40001:
@@ -281,25 +275,24 @@ def pushplus_bot(title: str, content: str) -> None:
         "content": content,
         "topic": push_config.get("PUSH_PLUS_USER"),
     }
-    body = json.dumps(data, quote_keys=True).encode(encoding="utf-8")
+    body = json.dumps(data).encode(encoding="utf-8")
     headers = {"Content-Type": "application/json"}
 
-    response = requests.post(url=url, data=body, headers=headers, timeout=15)
-    datas = response.json()
+    datas = requests.post(url=url, data=body, headers=headers, timeout=15).json()
     if datas.get("code") == 200:
         print("PUSHPLUS 推送成功！")
     elif datas.get("code") == 600:
         url2 = "http://pushplus.hxtrip.com/send"
-        response2 = requests.post(url=url2, data=body, headers=headers, timeout=15)
-        datas2 = response2.json()
+        headers["Accept"] = "application/json"
+        datas2 = requests.post(url=url2, data=body, headers=headers, timeout=15).json()
         if datas2.get("code") == 200:
             print("PUSHPLUS(hxtrip) 推送成功！")
         elif datas2.get("code") == 600:
             print("PUSHPLUS 推送失败！PUSH_PLUS_TOKEN 错误。")
         else:
-            print(f"PUSHPLUS(hxtrip) 推送失败！响应数据：{response2.text}")
+            print(f"PUSHPLUS(hxtrip) 推送失败！响应数据：{datas2}")
     else:
-        print(f"PUSHPLUS 推送失败！响应数据：{response.text}")
+        print(f"PUSHPLUS 推送失败！响应数据：{datas}")
 
 
 def qmsg_bot(title: str, content: str) -> None:
@@ -314,9 +307,8 @@ def qmsg_bot(title: str, content: str) -> None:
     url = f'https://qmsg.zendee.cn/{push_config.get("QMSG_TYPE")}/{push_config.get("QMSG_KEY")}'
     payload = {"msg": f'{title}\n\n{content.replace("----", "-")}'.encode("utf-8")}
 
-    response = requests.post(url=url, params=payload, timeout=15)
-    datas = response.json()
-    if response.get("code") == 0:
+    datas = requests.post(url=url, params=payload, timeout=15).json()
+    if datas.get("code") == 0:
         print("qmsg 推送成功！")
     else:
         print(f'qmsg 推送失败！错误信息：{datas.get("reason")}')
@@ -369,8 +361,8 @@ class WeCom:
             "corpsecret": self.CORPSECRET,
         }
         req = requests.post(url, params=values, timeout=15)
-        data = json.loads(req.text)
-        return data.get("access_token")
+        datas = json.loads(req.text)
+        return datas.get("access_token")
 
     def send_text(self, message, touser="@all"):
         send_url = (
@@ -384,9 +376,8 @@ class WeCom:
             "text": {"content": message},
             "safe": "0",
         }
-        send_msges = bytes(json.dumps(send_values, quote_keys=True), "utf-8")
-        response = requests.post(send_url, send_msges, timeout=15)
-        datas = response.json()
+        send_msges = bytes(json.dumps(send_values), "utf-8")
+        datas = requests.post(send_url, send_msges, timeout=15).json()
         return datas.get("errmsg")
 
     def send_mpnews(self, title, message, media_id, touser="@all"):
@@ -411,9 +402,8 @@ class WeCom:
                 ]
             },
         }
-        send_msges = bytes(json.dumps(send_values, quote_keys=True), "utf-8")
-        response = requests.post(send_url, send_msges, timeout=15)
-        datas = response.json()
+        send_msges = bytes(json.dumps(send_values), "utf-8")
+        datas = requests.post(send_url, send_msges, timeout=15).json()
         return datas.get("errmsg")
 
 
@@ -430,14 +420,13 @@ def wecom_bot(title: str, content: str) -> None:
     headers = {"Content-Type": "application/json;charset=utf-8"}
     data = {"msgtype": "text", "text": {"content": f"{title}\n\n{content}"}}
 
-    response = requests.post(
-        url=url, data=json.dumps(data, quote_keys=True), headers=headers, timeout=15
-    )
-    datas = response.json()
+    datas = requests.post(
+        url=url, data=json.dumps(data), headers=headers, timeout=15
+    ).json()
     if datas.get("errcode") == 0:
         print("企业微信机器人 推送成功！")
     else:
-        print(f"企业微信机器人 推送失败！响应数据：{response.text}")
+        print(f"企业微信机器人 推送失败！响应数据：{datas}")
 
 
 def telegram_bot(title: str, content: str) -> None:
@@ -476,10 +465,9 @@ def telegram_bot(title: str, content: str) -> None:
         )
         proxies = {"http": proxyStr, "https": proxyStr}
 
-    response = requests.post(
+    datas = requests.post(
         url=url, headers=headers, params=payload, proxies=proxies, timeout=15
-    )
-    datas = response.json()
+    ).json()
     if datas.get("ok") == True:
         print("tg 推送成功！")
     elif datas.get("error_code") == 400:
@@ -487,7 +475,7 @@ def telegram_bot(title: str, content: str) -> None:
     elif datas.get("error_code") == 401:
         print("tg 推送失败！TG_BOT_TOKEN 填写错误。")
     else:
-        print(f"tg 推送失败！响应数据：{response.text}")
+        print(f"tg 推送失败！响应数据：{datas}")
 
 
 def one() -> str:
@@ -534,7 +522,7 @@ def excepthook(args, /):
         print(
             f"网络异常，请检查你的网络连接、推送服务器和代理配置，该错误和账号配置无关。信息：{str(args.exc_type)}, {args.thread.name}"
         )
-    elif issubclass(args.exc_type, JSONDecodeError):
+    elif issubclass(args.exc_type, json.JSONDecodeError):
         print(
             f"推送返回值非 json 格式，请检查网址和账号是否填写正确。信息：{str(args.exc_type)}, {args.thread.name}"
         )
